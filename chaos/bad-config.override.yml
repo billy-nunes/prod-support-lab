@@ -1,0 +1,6 @@
+# A "config change" that rotates the app's DB password in the app, but nobody changed it in Postgres.
+services:
+  app:
+    environment:
+      DB_PASSWORD: "shop_app_pw_2026Q4"
+      APP_VERSION: "1.4.2"

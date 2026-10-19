@@ -1,0 +1,33 @@
+name: lab-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck scripts/*.sh db/init/*.sh app/entrypoint.sh
+      - name: python syntax
+        run: python3 -m py_compile app/app.py app/gunicorn.conf.py worker/worker.py loadgen/loadgen.py
+      - name: compose file is valid
+        run: docker compose config -q
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: start the lab with a small data set
+        run: make up SEED_SCALE=0.02
+      - name: smoke test
+        run: make smoke
+      - name: dump logs on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=100
+          tail -n 50 logs/app/app.log || true

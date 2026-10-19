@@ -1,0 +1,7 @@
+.env
+logs/**/*.log
+chaos/state/*
+!chaos/state/.gitkeep
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,11 @@
+# Week 6 starting point. Alert rules are yours to write (see docs/CURRICULUM.md, Week 6).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: shop-api
+    static_configs:
+      - targets: ["app:8000"]
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

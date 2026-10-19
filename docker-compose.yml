@@ -1,0 +1,154 @@
+# prod-support-lab: a small online shop you can break on purpose.
+#
+#   loadgen ──> nginx (:8080) ──> app (Flask/Gunicorn) ──> db (Postgres 16)
+#                                                           ^
+#                                   worker (settlement job) ┘
+#
+# Start:   make up            (first boot seeds ~1M orders, allow 2-4 minutes)
+# Break:   make chaos MODE=bad-release   or   make incident (random, hidden)
+# Fix:     make reset
+
+name: prodlab
+
+x-db-env: &db-env
+  DB_HOST: db
+  DB_NAME: shop
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:-postgres}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-shop_app_pw}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-shop_worker_pw}
+      SEED_SCALE: ${SEED_SCALE:-1}
+    command:
+      - postgres
+      - -c
+      - max_connections=60
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-256MB}
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_min_duration_statement=50
+      - -c
+      - log_lock_waits=on
+      - -c
+      - deadlock_timeout=1s
+      - -c
+      - "log_line_prefix=%m [%p] app=%a user=%u db=%d "
+      - -c
+      - log_timezone=UTC
+    shm_size: 256mb
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shop && psql -U postgres -d shop -Atc 'select 1 from job_runs limit 1' | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
+    restart: unless-stopped
+
+  app:
+    build: ./app
+    environment:
+      <<: *db-env
+      DB_USER: shop_app
+      DB_PASSWORD: ${APP_DB_PASSWORD:-shop_app_pw}
+      DB_POOL_MAX: "8"
+      APP_VERSION: "1.4.1"
+      CHAOS_DIR: /chaos
+      LOG_FILE: /var/log/shop/app.log
+      EXPORT_DIR: /exports
+    volumes:
+      - ./chaos/state:/chaos:ro
+      - ./logs/app:/var/log/shop
+    tmpfs:
+      - /exports:size=64m,mode=1777
+    mem_limit: ${APP_MEM_LIMIT:-400m}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  worker:
+    build: ./worker
+    environment:
+      <<: *db-env
+      DB_USER: shop_worker
+      DB_PASSWORD: ${WORKER_DB_PASSWORD:-shop_worker_pw}
+      CHAOS_DIR: /chaos
+      LOG_FILE: /var/log/shop/worker.log
+      INTERVAL_SECONDS: "30"
+    volumes:
+      - ./chaos/state:/chaos:ro
+      - ./logs/worker:/var/log/shop
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  loadgen:
+    build: ./loadgen
+    environment:
+      TARGET: http://nginx
+      RPS: ${LOADGEN_RPS:-4}
+      THREADS: "8"
+    volumes:
+      - ./logs/loadgen:/var/log/shop
+    depends_on:
+      - nginx
+    restart: unless-stopped
+
+  # ---- Week 6: observability (start with `make obs`) ----
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    profiles: ["obs"]
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:${PG_SUPERUSER_PASSWORD:-postgres}@db:5432/shop?sslmode=disable
+    depends_on:
+      - db
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: ["obs"]
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: ["obs"]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./observability/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+
+volumes:
+  pgdata:
