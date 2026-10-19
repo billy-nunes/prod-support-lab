@@ -88,14 +88,7 @@ runbook/               my on-call notes, built up as I go
 |----|---------|------|
 | _INC-001_ | _fill in_ | practice |
 
-## What I've learned so far
-
-- _fill in after your first incidents_
 
 ## Roadmap
 
 Following [docs/CURRICULUM.md](docs/CURRICULUM.md): Postgres deep dive, app and HTTP layer, batch jobs and backups, porting to Kubernetes with kind, then Prometheus, Grafana, alerts and SLOs.
-
-## How this was built
-
-The lab scaffold (stack, seed data and failure modes) was generated with an AI assistant and then run, tested and studied by me. The incident write-ups, runbook, migrations and everything in the commit history after the first commit are my own work.
